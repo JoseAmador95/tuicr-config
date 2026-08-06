@@ -1,0 +1,36 @@
+appearance = "system"
+theme_light = "github-light"
+theme_dark = "github-dark"
+
+diff_view = "side-by-side"
+commit_order = "ascending"
+initial_commit_selection = "oldest"
+show_file_list = true
+mouse = true
+cursor_line = true
+relative_line_numbers = false
+wrap = true
+scroll_offset = 12
+leader = " "
+
+transparent_background = true
+comment_vim = true
+
+comment_types = [
+  { id = "issue", label = "ISSUE", color = "red", definition = "must be fixed before merge" },
+  { id = "suggestion", label = "SUGGESTION", color = "yellow", definition = "optional improvement, non-blocking" },
+  { id = "question", label = "QUESTION", color = "blue", definition = "ask to clarify intent or a decision" },
+  { id = "pedantic", label = "PEDANTIC", color = "#d19a66", definition = "style, naming or format nitpick, safe to ignore" },
+  { id = "praise", label = "PRAISE", color = "green", definition = "highlight a good implementation or design decision" },
+]
+
+[forge]
+comment_type_prefix = true
+
+[export]
+intro = ""
+scope_line = true
+pr_metadata = true
+comments_header = "## Local Comments"
+remote_comments_header = "## Existing Review Comments"
+legend = true
