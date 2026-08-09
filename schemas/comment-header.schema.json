@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nvim-review.local/schemas/comment-header.schema.json",
+  "title": "nvim-review comment header",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "role", "author", "severity", "status", "reply_to"],
+  "properties": {
+    "version": { "const": 1 },
+    "role": { "enum": ["human", "agent", "verifier"] },
+    "author": { "type": "string", "minLength": 1 },
+    "severity": { "enum": ["blocker", "warning", "nit"] },
+    "status": { "enum": ["open", "accept", "discuss", "reject"] },
+    "reply_to": { "type": ["string", "null"], "minLength": 1 }
+  }
+}

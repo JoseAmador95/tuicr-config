@@ -1,4 +1,5 @@
 appearance = "system"
+backend = "cli"
 theme_light = "github-light"
 theme_dark = "github-dark"
 

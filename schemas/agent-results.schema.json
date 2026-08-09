@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nvim-review.local/schemas/agent-results.schema.json",
+  "title": "nvim-review agent results",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "repo_root", "run_id", "items"],
+  "properties": {
+    "version": { "const": 1 },
+    "repo_root": { "type": "string", "minLength": 1 },
+    "run_id": { "type": "string", "minLength": 1 },
+    "items": {
+      "type": "array",
+      "maxItems": 2000,
+      "items": { "$ref": "#/$defs/item" }
+    }
+  },
+  "$defs": {
+    "position": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["line"],
+      "properties": {
+        "line": { "type": "integer", "minimum": 1 },
+        "column": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "item": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "start", "end", "severity", "message", "source"],
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"
+        },
+        "start": { "$ref": "#/$defs/position" },
+        "end": { "$ref": "#/$defs/position" },
+        "severity": { "enum": ["blocker", "warning", "nit"] },
+        "message": { "type": "string", "minLength": 1 },
+        "source": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}
