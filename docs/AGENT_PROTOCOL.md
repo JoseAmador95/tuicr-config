@@ -64,11 +64,13 @@ native session files. Comments enter tuicr only through `tuicr review add`.
 
 ## Safety boundary
 
-The launcher requires exactly tuicr 0.21.0. It uses a round-private `HOME`, the
-real `XDG_CONFIG_HOME`, and an external Git directory whose object alternates
-point read-only at the real common object store. The real repository's index,
-refs, object store, and worktree are never update targets. Sparse/split indexes,
-conflicts, filters/LFS, and partial/promisor clones fail closed.
+The launcher verifies that tuicr is available by successfully running
+`tuicr --version`; it does not require a particular version string. It uses a
+round-private `HOME`, the real `XDG_CONFIG_HOME`, and an external Git directory
+whose object alternates point read-only at the real common object store. The
+real repository's index, refs, object store, and worktree are never update
+targets. Sparse/split indexes, conflicts, filters/LFS, and partial/promisor
+clones fail closed.
 
 Dirty content over 50 MiB is reported as a warning; content over 500 MiB is
 rejected before worktree blobs are hashed. Dirty captures preserve staged `S0`
@@ -77,7 +79,7 @@ frozen range without `-w`; untracked files are already part of `B0`. The pinned
 `initial_commit_selection = "oldest"` opens `S0` first and tuicr's inline commit
 selector exposes `B0`. If `B0` restores the original `HEAD` tree, a private
 transport base is added as B0's second-parent ancestry. It exists only to pass
-tuicr 0.21's aggregate-diff preflight: the reviewed `transport-base..B0` range
+tuicr's aggregate-diff preflight: the reviewed `transport-base..B0` range
 still enumerates exactly `S0` and `B0`, whose first-parent diffs are the exact
 staged and unstaged layers. No transport path is present in either reviewed
 commit or in the real checkout.

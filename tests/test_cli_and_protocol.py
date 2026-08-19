@@ -8,13 +8,15 @@ import unittest
 from unittest import mock
 
 from helpers import commit_all, init_repo, launcher, write
+from tuicr_round import protocol
+from tuicr_round.util import RoundError
 
 
 FAKE_TUICR = r'''#!/usr/bin/env python3
 import json, os, pathlib, sys, time
 args = sys.argv[1:]
 if args == ["--version"]:
-    print("tuicr 0.21.0")
+    print("tuicr 999.0.0-test")
     raise SystemExit(0)
 home = pathlib.Path(os.environ["HOME"])
 session = home / "review-session.json"
@@ -64,6 +66,45 @@ elif command and command[0] == "display-message":
     print(os.getpid() if command[-1] == "#{pid}" else "0")
 raise SystemExit(0)
 '''
+
+
+class TuicrAvailabilityTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.bin = pathlib.Path(self.temporary.name) / "bin"
+        self.bin.mkdir()
+
+    def tearDown(self):
+        self.temporary.cleanup()
+
+    def test_arbitrary_version_output_is_accepted(self):
+        write(
+            self.bin / "tuicr",
+            '#!/bin/sh\ntest "$#" -eq 1 && test "$1" = "--version" || exit 97\nprintf \'custom nightly build\\n\'\n',
+            0o755,
+        )
+        with mock.patch.dict(os.environ, {"PATH": str(self.bin)}):
+            self.assertIsNone(protocol.check_tuicr_available())
+
+    def test_missing_executable_is_structured(self):
+        with mock.patch.dict(os.environ, {"PATH": str(self.bin)}):
+            with self.assertRaises(RoundError) as raised:
+                protocol.check_tuicr_available()
+        self.assertEqual(raised.exception.code, "missing_dependency")
+        self.assertEqual(raised.exception.details, {"executable": "tuicr"})
+        self.assertEqual(raised.exception.exit_code, 2)
+
+    def test_nonzero_version_probe_is_structured(self):
+        write(self.bin / "tuicr", "#!/bin/sh\nprintf 'broken probe\\n' >&2\nexit 19\n", 0o755)
+        with mock.patch.dict(os.environ, {"PATH": str(self.bin)}):
+            with self.assertRaises(RoundError) as raised:
+                protocol.check_tuicr_available()
+        self.assertEqual(raised.exception.code, "command_failed")
+        self.assertEqual(
+            raised.exception.details,
+            {"argv": ["tuicr", "--version"], "exit_code": 19, "stderr": "broken probe"},
+        )
+        self.assertEqual(raised.exception.exit_code, 2)
 
 
 class CliProtocolTests(unittest.TestCase):

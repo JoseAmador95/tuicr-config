@@ -1,4 +1,4 @@
-"""tuicr 0.21 public-CLI integration and nvim-review comment protocol."""
+"""tuicr public-CLI integration and nvim-review comment protocol."""
 
 import hashlib
 import json
@@ -10,7 +10,6 @@ from .state import round_lock, update_round
 from .util import RoundError, json_bytes, run
 
 
-TUICR_VERSION = "0.21.0"
 HEADER_PREFIX = "@nvim-review "
 PROTOCOL_VERSION = 1
 ROLES = ("human", "agent", "verifier")
@@ -19,12 +18,8 @@ STATUSES = ("open", "accept", "discuss", "reject")
 TYPE_BY_SEVERITY = {"blocker": "issue", "warning": "suggestion", "nit": "pedantic"}
 
 
-def check_version():
-    result = run(["tuicr", "--version"])
-    actual = result.stdout.decode("utf-8", "replace").strip()
-    expected = "tuicr " + TUICR_VERSION
-    if actual != expected:
-        raise RoundError("unsupported_tuicr_version", "tuicr 0.21.0 is required", {"expected": expected, "actual": actual})
+def check_tuicr_available():
+    run(["tuicr", "--version"])
 
 
 def tuicr_environment(round_value):

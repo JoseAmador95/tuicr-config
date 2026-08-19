@@ -3,7 +3,7 @@
 import os
 import pathlib
 
-from .protocol import check_version, tuicr_environment
+from .protocol import check_tuicr_available, tuicr_environment
 from .state import round_lock, update_round
 from .util import RoundError, emit, run
 
@@ -116,7 +116,7 @@ def stop_server(round_value):
 
 def launch_tuicr(round_value):
     try:
-        check_version()
+        check_tuicr_available()
         environment = tuicr_environment(round_value)
         arguments = [
             "tuicr",

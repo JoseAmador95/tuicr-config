@@ -334,7 +334,7 @@ def _create_one(root, repo_path, xdg_config_home, parent_round=None):
     # Comparing only HEAD to B0 loses an MM path when its worktree contents
     # restore HEAD, even though S0 contains a real staged change.
     def transport_base_commit():
-        # tuicr 0.21 resolves an explicit range's aggregate diff before it
+        # tuicr resolves an explicit range's aggregate diff before it
         # applies initial_commit_selection=oldest.  When B0 restores HEAD, that
         # aggregate is empty and tuicr exits before S0 can be selected.  A
         # private second-parent base with one transport-only path makes the

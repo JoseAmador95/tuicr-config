@@ -15,7 +15,7 @@ FAKE = r'''#!/usr/bin/env python3
 import json, os, pathlib, sys
 args = sys.argv[1:]
 if args == ["--version"]:
-    print("tuicr 0.21.0")
+    print("tuicr 999.0.0-test")
 elif args[:2] == ["review", "list"]:
     print(json.dumps([{"slug":"fixture/worktree","path":str(pathlib.Path(os.environ["HOME"])/"session.json"),"active":False}]))
 elif args[:2] == ["review", "comments"]:

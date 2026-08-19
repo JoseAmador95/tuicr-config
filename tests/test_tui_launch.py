@@ -23,7 +23,7 @@ class TuiLaunchTests(unittest.TestCase):
             captured["environment"] = environment
             raise RuntimeError("captured")
 
-        with mock.patch.object(tmux_control, "check_version"), mock.patch.object(
+        with mock.patch.object(tmux_control, "check_tuicr_available"), mock.patch.object(
             tmux_control, "tuicr_environment", return_value=os.environ.copy()
         ), mock.patch.object(tmux_control, "emit"), mock.patch.object(
             tmux_control.os, "chdir"

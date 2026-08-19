@@ -12,7 +12,7 @@ from .git_baseline import resolve_repo, start_rounds
 from .protocol import (
     add_comment,
     analyze_threads,
-    check_version,
+    check_tuicr_available,
     comment_digest,
     comments_for_session,
     confirmation_token,
@@ -31,7 +31,7 @@ class JsonArgumentParser(argparse.ArgumentParser):
 
 
 def _parser():
-    parser = JsonArgumentParser(prog="tuicr-round", description="Isolated synthetic review rounds for tuicr 0.21.0")
+    parser = JsonArgumentParser(prog="tuicr-round", description="Isolated synthetic review rounds for tuicr")
     commands = parser.add_subparsers(dest="command", required=True, parser_class=JsonArgumentParser)
 
     start = commands.add_parser("start", help="capture the current repository state")
@@ -289,7 +289,7 @@ def main(argv=None, entrypoint=None):
         if argv and argv[0] == "__launch":
             return _internal(argv[1:])
         arguments = _parser().parse_args(argv)
-        check_version()
+        check_tuicr_available()
         root = prepare_root(state_root())
         if arguments.command == "start":
             result = _command_start(root, arguments)
