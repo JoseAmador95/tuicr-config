@@ -1,0 +1,6 @@
+interface:
+  display_name: "TUICR Review"
+  short_description: "Evaluate and address TUICR feedback"
+  default_prompt: "Use $tuicr-address-review to process TUICR-ROUND:UUID."
+policy:
+  allow_implicit_invocation: true
