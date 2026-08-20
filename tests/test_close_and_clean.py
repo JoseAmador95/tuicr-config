@@ -51,11 +51,11 @@ class CloseAndCleanTests(unittest.TestCase):
     def tearDown(self):
         self.temporary.cleanup()
 
-    def _comment(self, comment_id, status, reply_to=None):
+    def _comment(self, comment_id, status, reply_to=None, role="human", author="Fixture User"):
         metadata = {
             "version": 1,
-            "role": "human",
-            "author": "Fixture User",
+            "role": role,
+            "author": author,
             "severity": "warning",
             "status": status,
             "reply_to": reply_to,
@@ -67,6 +67,11 @@ class CloseAndCleanTests(unittest.TestCase):
         result, payload = launcher(self.state, "close", "--round", self.round_id, extra_env=self.env)
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(payload["error"]["code"], "confirmation_required")
+        self.assertEqual(payload["error"]["details"]["unstructured"], 0)
+        self.assertEqual(payload["error"]["details"]["blocking_threads"], ["legacy"])
+
+        self.comments.write_text(json.dumps([{"id": "", "content": "missing id"}]))
+        result, payload = launcher(self.state, "close", "--round", self.round_id, extra_env=self.env)
         self.assertEqual(payload["error"]["details"]["unstructured"], 1)
 
         self.comments.write_text(json.dumps([self._comment("root", "open")]))
@@ -93,7 +98,11 @@ class CloseAndCleanTests(unittest.TestCase):
         self.assertIsNotNone(payload["closed_at"])
 
     def test_resolved_comments_close_without_confirmation(self):
-        comments = [self._comment("root", "open"), self._comment("reply", "accept", "root")]
+        comments = [
+            {"id": "root", "content": "native review", "comment_type": "question"},
+            self._comment("plan", "discuss", "root", role="agent", author="Codex GPT-5"),
+            self._comment("reply", "accept", "plan", role="agent", author="Codex GPT-5"),
+        ]
         self.comments.write_text(json.dumps(comments))
         result, payload = launcher(self.state, "close", "--round", self.round_id, extra_env=self.env)
         self.assertEqual(result.returncode, 0, payload)
@@ -101,12 +110,16 @@ class CloseAndCleanTests(unittest.TestCase):
     def test_accepted_returns_only_latest_accept_threads(self):
         comments = [
             self._comment("one", "open"), self._comment("one-a", "accept", "one"),
-            self._comment("two", "open"), self._comment("two-d", "discuss", "two"),
+            self._comment("two", "open"),
+            self._comment("two-a", "accept", "two", role="agent", author="Codex GPT-5"),
+            self._comment("three", "open"), self._comment("three-d", "discuss", "three"),
         ]
         self.comments.write_text(json.dumps(comments))
         result, payload = launcher(self.state, "accepted", "--round", self.round_id, extra_env=self.env)
         self.assertEqual(result.returncode, 0, payload)
         self.assertEqual([item["root_id"] for item in payload["accepted"]], ["one"])
+        self.assertEqual(payload["accepted"][0]["latest_role"], "human")
+        self.assertEqual(payload["accepted"][0]["latest_author"], "Fixture User")
 
     def test_clean_only_removes_old_closed_inactive_rounds(self):
         clean_state = self.base / "clean-state"

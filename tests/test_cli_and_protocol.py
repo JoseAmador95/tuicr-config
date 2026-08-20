@@ -118,6 +118,7 @@ class CliProtocolTests(unittest.TestCase):
         self.state = self.base / "state"
         result, payload = launcher(self.state, "start", "--repo", self.repo)
         self.assertEqual(result.returncode, 0, payload)
+        self.start_payload = payload
         self.round_id = payload["round"]
         self.home = self.state / "rounds" / self.round_id / "home"
         self.fake_bin = self.base / "fake-bin"
@@ -253,6 +254,178 @@ class CliProtocolTests(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, payload)
         self.assertEqual(payload["warnings"][0]["command"], "tuicr-round accepted --round " + self.round_id)
+
+        result, payload = launcher(
+            self.state, "respond", "--round", self.round_id, "--role", "agent",
+            "--author", "Agent", "--severity", "nit", "--status", "accept",
+            "--reply-to", "root-id", "implemented", extra_env=response_env,
+        )
+        self.assertEqual(result.returncode, 0, payload)
+        self.assertNotIn("warnings", payload)
+
+    def test_comments_normalizes_native_protocol_malformed_and_unstructured(self):
+        comments_path = self.base / "comments.json"
+        response_header = (
+            '@nvim-review {"version":1,"role":"agent","author":"Codex GPT-5",'
+            '"severity":"blocker","status":"discuss","reply_to":"native"}'
+        )
+        comments = [
+            {
+                "id": "native",
+                "username": "Reviewer",
+                "content": "Please keep the old-side range.",
+                "path": "file.txt",
+                "start_line": 2,
+                "end_line": 4,
+                "side": "old",
+                "location": "file.txt:2-4",
+                "comment_type": "issue",
+            },
+            {
+                "id": "plan",
+                "content": response_header + "\nPLAN\nContext and solution",
+                "path": "file.txt",
+                "start_line": 2,
+                "end_line": 4,
+                "side": "old",
+                "comment_type": "issue",
+            },
+            {"id": "broken", "content": "@nvim-review not-json"},
+            {"id": "", "content": "missing id"},
+        ]
+        comments_path.write_text(json.dumps(comments))
+        environment = dict(self.fake_env)
+        environment["FAKE_COMMENTS"] = str(comments_path)
+
+        result, payload = launcher(self.state, "comments", "--repo", self.repo, extra_env=environment)
+
+        self.assertEqual(result.returncode, 0, payload)
+        self.assertEqual(len(result.stdout.splitlines()), 1)
+        self.assertEqual(payload["command"], "comments")
+        self.assertEqual(payload["repo_root"], str(self.repo.resolve()))
+        snapshot_keys = (
+            "branch", "head", "s0_tree", "s0_commit", "b0_tree", "b0_commit", "review_base_commit", "clean",
+        )
+        self.assertEqual(
+            payload["snapshot"],
+            {key: self.start_payload[key] for key in snapshot_keys},
+        )
+        self.assertEqual(payload["handoff"], "TUICR-ROUND:" + self.round_id)
+        self.assertEqual(
+            payload["prompt"],
+            "Use $tuicr-address-review to process TUICR-ROUND:%s." % self.round_id,
+        )
+        self.assertEqual(payload["comment_digest"], protocol.comment_digest(comments))
+        self.assertEqual([item["origin"] for item in payload["comments"]], ["native", "protocol"])
+        native, response = payload["comments"]
+        self.assertEqual(native["raw"], comments[0])
+        self.assertEqual(native["message"], comments[0]["content"])
+        self.assertEqual(native["header"]["role"], "human")
+        self.assertEqual(native["header"]["author"], "Reviewer")
+        self.assertEqual(native["header"]["severity"], "blocker")
+        self.assertEqual(native["target"], {
+            "path": "file.txt", "start": 2, "end": 4, "side": "old", "location": "file.txt:2-4",
+        })
+        self.assertEqual(response["message"], "PLAN\nContext and solution")
+        self.assertEqual(response["header"]["author"], "Codex GPT-5")
+        self.assertEqual(payload["threads"][0]["root_id"], "native")
+        self.assertEqual(payload["threads"][0]["latest_id"], "plan")
+        self.assertEqual(payload["threads"][0]["latest_role"], "agent")
+        self.assertEqual(payload["threads"][0]["latest_author"], "Codex GPT-5")
+        self.assertEqual(payload["malformed"], [comments[2]])
+        self.assertEqual(payload["unstructured"], [comments[3]])
+
+    def test_respond_inherits_native_old_range_and_allows_explicit_override(self):
+        comments_path = self.base / "comments.json"
+        comments_path.write_text(json.dumps([{
+            "id": "native",
+            "content": "Review note",
+            "path": "file.txt",
+            "start_line": 2,
+            "end_line": 4,
+            "side": "old",
+            "comment_type": "praise",
+        }]))
+        environment = dict(self.fake_env)
+        environment["FAKE_COMMENTS"] = str(comments_path)
+
+        result, payload = launcher(
+            self.state, "respond", "--round", self.round_id, "--role", "agent",
+            "--author", "Codex GPT-5", "--severity", "nit", "--reply-to", "native",
+            "PLAN", extra_env=environment,
+        )
+        self.assertEqual(result.returncode, 0, payload)
+        result, payload = launcher(
+            self.state, "respond", "--round", self.round_id, "--role", "agent",
+            "--author", "Codex GPT-5", "--severity", "nit", "--reply-to", "native",
+            "--path", "file.txt", "--start", "1", "--side", "new", "RESULT", extra_env=environment,
+        )
+        self.assertEqual(result.returncode, 0, payload)
+        additions = [json.loads(line) for line in (self.home / "adds.jsonl").read_text().splitlines()]
+        self.assertEqual(
+            {key: additions[0].get(key) for key in ("file", "start_line", "end_line", "line", "side")},
+            {"file": "file.txt", "start_line": 2, "end_line": 4, "line": None, "side": "old"},
+        )
+        self.assertEqual(additions[1]["file"], "file.txt")
+        self.assertEqual(additions[1]["line"], 1)
+        self.assertEqual(additions[1]["side"], "new")
+        self.assertNotIn("start_line", additions[1])
+
+    def test_respond_rejects_malformed_target(self):
+        comments_path = self.base / "comments.json"
+        comments_path.write_text(json.dumps([{"id": "broken", "content": "@nvim-review invalid"}]))
+        environment = dict(self.fake_env)
+        environment["FAKE_COMMENTS"] = str(comments_path)
+        result, payload = launcher(
+            self.state, "respond", "--round", self.round_id, "--role", "agent",
+            "--author", "Codex GPT-5", "--severity", "warning", "--reply-to", "broken",
+            "PLAN", extra_env=environment,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(payload["error"]["code"], "invalid_reply")
+
+    def test_handoff_prompt_and_copy_contract(self):
+        expected = "Use $tuicr-address-review to process TUICR-ROUND:%s." % self.round_id
+        result, payload = launcher(self.state, "handoff", "--round", self.round_id, extra_env=self.fake_env)
+        self.assertEqual(result.returncode, 0, payload)
+        self.assertEqual(payload["prompt"], expected)
+        self.assertFalse(payload["copied"])
+
+        copied = self.base / "copied.txt"
+        write(self.fake_bin / "pbcopy", '#!/bin/sh\ncat > "$PBCOPY_OUT"\n', 0o755)
+        environment = dict(self.fake_env)
+        environment["PBCOPY_OUT"] = str(copied)
+        result, payload = launcher(
+            self.state, "handoff", "--round", self.round_id, "--copy", extra_env=environment,
+        )
+        self.assertEqual(result.returncode, 0, payload)
+        self.assertTrue(payload["copied"])
+        self.assertEqual(copied.read_text(), expected)
+
+        write(self.fake_bin / "pbcopy", "#!/bin/sh\nexit 17\n", 0o755)
+        result, payload = launcher(
+            self.state, "handoff", "--round", self.round_id, "--copy", extra_env=self.fake_env,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(payload["error"]["code"], "command_failed")
+
+    def test_start_status_and_native_fallback_metadata(self):
+        marker = "TUICR-ROUND:" + self.round_id
+        self.assertEqual(self.start_payload["handoff"], marker)
+        self.assertEqual(self.start_payload["prompt"], "Use $tuicr-address-review to process %s." % marker)
+        result, payload = launcher(self.state, "status", "--round", self.round_id, extra_env=self.fake_env)
+        self.assertEqual(result.returncode, 0, payload)
+        self.assertEqual(payload["handoff"], marker)
+        self.assertEqual(payload["prompt"], "Use $tuicr-address-review to process %s." % marker)
+
+        analysis = protocol.normalize_comments([
+            {"id": "praise", "content": "Nice work", "comment_type": "praise", "author": ""},
+            {"id": "question", "content": "Why?", "comment_type": "question", "author": "Alice"},
+        ])
+        self.assertEqual(analysis["comments"][0]["header"]["severity"], "nit")
+        self.assertEqual(analysis["comments"][0]["header"]["author"], "Human reviewer")
+        self.assertEqual(analysis["comments"][1]["header"]["severity"], "warning")
+        self.assertEqual(analysis["comments"][1]["header"]["author"], "Alice")
 
 
 if __name__ == "__main__":

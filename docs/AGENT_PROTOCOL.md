@@ -18,12 +18,30 @@ two canonical schemas in `schemas/`.
    its output; a later `open` fails visibly with the exact attach command instead
    of silently replacing it.
 3. Poll `tuicr-round status --round UUID` until `session` contains the exact
-   slug returned by `tuicr review list`.
-4. Add findings with `add`; reply with `respond`. Agents and verifiers must pass
-   their exact display name with `--author`.
-5. Read explicit acceptances with `tuicr-round accepted --round UUID`. Never
-   type into, send keys to, or otherwise drive the human's TUI pane.
-6. The human closes the round manually. Resolved threads close immediately.
+   slug returned by `tuicr review list`. `status`, `start`, and `comments`
+   include the stable `TUICR-ROUND:UUID` handoff marker and canonical Codex
+   prompt. `tuicr-round handoff --round UUID --copy` copies that prompt with
+   `pbcopy`.
+4. Read review input only with `tuicr-round comments --round UUID`. It returns
+   the digest of the unmodified public JSON plus normalized comments and
+   threads. Its `snapshot` object contains the branch, HEAD, S0/B0 trees and
+   commits, review base, and clean flag frozen when the round started. This is
+   review context, not proof that the current checkout still matches that
+   snapshot. Normal comments entered by a person in the TUI are native
+   `human/open` thread roots. A comment beginning with `@nvim-review` must have
+   a valid protocol header; otherwise it is reported as malformed rather than
+   reinterpreted as native.
+5. Add findings with `add`; reply with `respond`. Agents publish their PLAN and
+   final RESULT as replies so both remain visible beside the human comment in
+   TUICR. Agents and verifiers must pass their exact agent/model display name
+   with `--author`; do not abbreviate or guess it. Replies to native and
+   protocol comments are both supported, and an omitted target inherits the
+   referenced comment's file/range and old/new side.
+6. Read explicit human or verifier acceptances with
+   `tuicr-round accepted --round UUID`. Never type into, send keys to, or
+   otherwise drive the human's TUI pane. All comment reads and writes go
+   through the launcher; never read or edit TUICR session/state files.
+7. The human closes the round manually. Resolved threads close immediately.
    When open, discuss, malformed, or unmanaged comments remain, the first
    `close` returns a token bound to the current public comment JSON; retry with
    `--confirm TOKEN`. A changed comment set makes the token stale.
@@ -48,6 +66,17 @@ tuicr types as follows: `blocker` to `issue`, `warning` to `suggestion`, and
 
 Targets are repository-relative POSIX paths. Positions are one-based. A file
 without a position creates a file comment; omit the path for a review comment.
+Roots default to the new side. `respond --reply-to ID` inherits the referenced
+target when no target flags are supplied; `--path`, `--start`, `--end`, and
+`--side old|new` explicitly override it.
+
+The `comments` command exposes each usable item with its raw TUICR object,
+human-readable message, actual or synthetic protocol header, `native` or
+`protocol` origin, original `comment_type`, and a normalized target containing
+path, start, end, side, and display location. Native `issue` comments map to
+`blocker`; `pedantic` and `praise` map to `nit`; every other native type maps to
+`warning`. A native author comes from `username` or `author`, with
+`Human reviewer` as the fallback.
 
 ## Batch result interchange
 

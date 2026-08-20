@@ -16,6 +16,7 @@ ROLES = ("human", "agent", "verifier")
 SEVERITIES = ("blocker", "warning", "nit")
 STATUSES = ("open", "accept", "discuss", "reject")
 TYPE_BY_SEVERITY = {"blocker": "issue", "warning": "suggestion", "nit": "pedantic"}
+SEVERITY_BY_NATIVE_TYPE = {"issue": "blocker", "pedantic": "nit", "praise": "nit"}
 
 
 def check_tuicr_available():
@@ -128,6 +129,96 @@ def normalize_target(repo_root, path, start=None, end=None):
     return normalized, start, end
 
 
+def _target_for_comment(comment):
+    nested = comment.get("target") if isinstance(comment.get("target"), dict) else {}
+    path = comment.get("path", comment.get("file", nested.get("file")))
+    if not isinstance(path, str) or not path:
+        path = None
+    start = comment.get("start_line", comment.get("line", nested.get("start_line", nested.get("line"))))
+    end = comment.get("end_line", nested.get("end_line"))
+    if start is not None and end is None:
+        end = start
+    if not isinstance(start, int) or isinstance(start, bool) or start < 1:
+        start = None
+        end = None
+    elif not isinstance(end, int) or isinstance(end, bool) or end < start:
+        end = start
+    side = comment.get("side", nested.get("side"))
+    if side not in ("old", "new"):
+        side = "new"
+    location = comment.get("location")
+    if not isinstance(location, str) or not location:
+        if path is None:
+            location = "review"
+        elif start is None:
+            location = path
+        elif end == start:
+            location = "%s:%d" % (path, start)
+        else:
+            location = "%s:%d-%d" % (path, start, end)
+    return {"path": path, "start": start, "end": end, "side": side, "location": location}
+
+
+def _native_header(comment):
+    author = comment.get("username")
+    if not isinstance(author, str) or not author.strip():
+        author = comment.get("author")
+    if not isinstance(author, str) or not author.strip():
+        author = "Human reviewer"
+    else:
+        author = author.strip()
+    comment_type = comment.get("comment_type", comment.get("type"))
+    severity = SEVERITY_BY_NATIVE_TYPE.get(comment_type, "warning")
+    return {
+        "version": PROTOCOL_VERSION,
+        "role": "human",
+        "author": author,
+        "severity": severity,
+        "status": "open",
+        "reply_to": None,
+    }
+
+
+def normalize_comments(comments):
+    """Classify public tuicr JSON without changing the raw digest contract."""
+    normalized = []
+    unstructured = []
+    malformed = []
+    for comment in comments:
+        comment_id = comment.get("id")
+        content = comment.get("content")
+        if not isinstance(comment_id, str) or not comment_id.strip() or not isinstance(content, str) or not content.strip():
+            unstructured.append(comment)
+            continue
+        first = content.splitlines()[0] if content.splitlines() else ""
+        metadata = parse_header(comment)
+        if first.startswith("@nvim-review"):
+            if metadata is None:
+                malformed.append(comment)
+                continue
+            origin = "protocol"
+            message = content.split("\n", 1)[1] if "\n" in content else ""
+        else:
+            origin = "native"
+            metadata = _native_header(comment)
+            message = content
+        comment_type = comment.get("comment_type", comment.get("type"))
+        if not isinstance(comment_type, str) or not comment_type:
+            comment_type = None
+        normalized.append(
+            {
+                "id": comment_id,
+                "origin": origin,
+                "message": message,
+                "header": metadata,
+                "comment_type": comment_type,
+                "target": _target_for_comment(comment),
+                "raw": comment,
+            }
+        )
+    return {"comments": normalized, "unstructured": unstructured, "malformed": malformed}
+
+
 def resolve_author(round_value, role, author):
     if role not in ROLES:
         raise RoundError("invalid_role", "Unsupported protocol role", {"role": role})
@@ -163,24 +254,46 @@ def header(role, author, severity, status, reply_to):
     return HEADER_PREFIX + json.dumps(value, separators=(",", ":"), ensure_ascii=False)
 
 
-def add_comment(root, round_value, role, author, severity, status, message, reply_to=None, path=None, start=None, end=None):
+def add_comment(
+    root,
+    round_value,
+    role,
+    author,
+    severity,
+    status,
+    message,
+    reply_to=None,
+    path=None,
+    start=None,
+    end=None,
+    side=None,
+):
     if not isinstance(message, str) or not message.strip():
         raise RoundError("invalid_message", "Comment message must not be empty")
     author = resolve_author(round_value, role, author)
-    path, start, end = normalize_target(round_value["repo_root"], path, start, end)
     if reply_to is None and status != "open":
         raise RoundError("invalid_status", "Root comments must start with status open")
+    inherited = None
     if reply_to is not None:
         comments = get_comments(root, round_value)
-        target = next((item for item in comments if item.get("id") == reply_to), None)
-        if target is None or parse_header(target) is None:
+        analysis = normalize_comments(comments)
+        target = next((item for item in analysis["comments"] if item["id"] == reply_to), None)
+        if target is None:
             raise RoundError(
                 "invalid_reply",
-                "reply_to must identify a structured comment in this round",
+                "reply_to must identify a valid native or protocol comment in this round",
                 {"reply_to": reply_to},
             )
+        inherited = target["target"]
+    if path is None and start is None and end is None and inherited is not None:
+        path, start, end = inherited["path"], inherited["start"], inherited["end"]
+    path, start, end = normalize_target(round_value["repo_root"], path, start, end)
+    if side is None:
+        side = inherited["side"] if inherited is not None else "new"
+    if side not in ("old", "new"):
+        raise RoundError("invalid_target", "Target side must be old or new", {"side": side})
     content = header(role, author, severity, status, reply_to) + "\n" + message
-    payload = {"type": TYPE_BY_SEVERITY[severity], "content": content, "side": "new"}
+    payload = {"type": TYPE_BY_SEVERITY[severity], "content": content, "side": side}
     if path is not None:
         payload["file"] = path
         if start is not None and end is not None and start != end:
@@ -235,18 +348,13 @@ def parse_header(comment):
 
 
 def analyze_threads(comments):
-    parsed = []
-    unstructured = []
+    analysis = normalize_comments(comments)
+    parsed = analysis["comments"]
+    unstructured = analysis["unstructured"]
+    malformed = list(analysis["malformed"])
     by_id = {}
-    for position, comment in enumerate(comments):
-        comment_id = comment.get("id")
-        metadata = parse_header(comment)
-        if not isinstance(comment_id, str) or not comment_id or metadata is None:
-            unstructured.append(comment)
-            continue
-        record = {"id": comment_id, "comment": comment, "header": metadata, "position": position}
-        parsed.append(record)
-        by_id[comment_id] = record
+    for record in parsed:
+        by_id[record["id"]] = record
 
     def root_id(record):
         seen = set()
@@ -260,29 +368,31 @@ def analyze_threads(comments):
         return current["id"]
 
     groups = {}
-    malformed = []
     for record in parsed:
         root = root_id(record)
         if root is None:
-            malformed.append(record["comment"])
+            malformed.append(record["raw"])
             continue
         groups.setdefault(root, []).append(record)
     threads = []
     for root, records in groups.items():
-        records.sort(key=lambda item: item["position"])
         latest = records[-1]
         threads.append(
             {
                 "root_id": root,
                 "status": latest["header"]["status"],
                 "severity": by_id[root]["header"]["severity"],
-                "comment": by_id[root]["comment"],
+                "comment": by_id[root]["raw"],
+                "root": by_id[root],
                 "latest_id": latest["id"],
+                "latest": latest,
+                "latest_role": latest["header"]["role"],
+                "latest_author": latest["header"]["author"],
                 "comment_ids": [item["id"] for item in records],
             }
         )
     threads.sort(key=lambda item: item["root_id"])
-    return {"threads": threads, "unstructured": unstructured, "malformed": malformed}
+    return {"comments": parsed, "threads": threads, "unstructured": unstructured, "malformed": malformed}
 
 
 def comment_digest(comments):

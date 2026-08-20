@@ -22,7 +22,7 @@ from .protocol import (
 )
 from .state import iter_rounds, load_round, prepare_root, resolve_round, round_dir, round_lock, save_round, state_root
 from .tmux_control import ensure_session, launch_tuicr, stop_server, tui_active
-from .util import RoundError, emit, isoformat, parse_time, process_alive, utc_now
+from .util import RoundError, emit, isoformat, parse_time, process_alive, run, utc_now
 
 
 class JsonArgumentParser(argparse.ArgumentParser):
@@ -47,6 +47,11 @@ def _parser():
     selector(opened)
     status = commands.add_parser("status", help="show round and exact tuicr session state")
     selector(status)
+    comments = commands.add_parser("comments", help="read normalized public review comments")
+    selector(comments)
+    handoff = commands.add_parser("handoff", help="produce the canonical Codex handoff prompt")
+    selector(handoff)
+    handoff.add_argument("--copy", action="store_true")
 
     def comment_arguments(command, response=False):
         selector(command)
@@ -59,6 +64,7 @@ def _parser():
         command.add_argument("--path")
         command.add_argument("--start", type=int)
         command.add_argument("--end", type=int)
+        command.add_argument("--side", choices=("old", "new"))
         command.add_argument("message")
 
     add = commands.add_parser("add", help="add a structured root comment")
@@ -86,9 +92,21 @@ def _xdg_config_home():
     return pathlib.Path(__file__).resolve().parents[2]
 
 
+def _handoff(round_id):
+    return "TUICR-ROUND:" + round_id
+
+
+def _handoff_prompt(round_id):
+    return "Use $tuicr-address-review to process %s." % _handoff(round_id)
+
+
+def _handoff_fields(round_id):
+    return {"handoff": _handoff(round_id), "prompt": _handoff_prompt(round_id)}
+
+
 def _command_start(root, arguments):
     parent, created = start_rounds(arguments.repo, root, _xdg_config_home())
-    return {
+    payload = {
         "ok": True,
         "command": "start",
         "round": parent["id"],
@@ -102,8 +120,18 @@ def _command_start(root, arguments):
         "review_base_commit": parent["review_base_commit"],
         "clean": parent["clean"],
         "warnings": parent["warnings"],
-        "rounds": [{"round": item["id"], "repo_root": item["repo_root"], "parent_round": item["parent_round"]} for item in created],
+        "rounds": [
+            {
+                "round": item["id"],
+                "repo_root": item["repo_root"],
+                "parent_round": item["parent_round"],
+                **_handoff_fields(item["id"]),
+            }
+            for item in created
+        ],
     }
+    payload.update(_handoff_fields(parent["id"]))
+    return payload
 
 
 def _open_value(root, value, entrypoint, payload=None):
@@ -144,7 +172,7 @@ def _command_open(root, arguments, entrypoint):
 def _command_status(root, arguments):
     value = _selected(root, arguments)
     session = resolve_session(root, value)
-    return {
+    payload = {
         "ok": True,
         "command": "status",
         "round": value["id"],
@@ -152,6 +180,53 @@ def _command_status(root, arguments):
         "closed_at": value.get("closed_at"),
         "tui_active": tui_active(value),
         "session": session,
+    }
+    payload.update(_handoff_fields(value["id"]))
+    return payload
+
+
+def _command_comments(root, arguments):
+    value = _selected(root, arguments)
+    comments = get_comments(root, value)
+    analysis = analyze_threads(comments)
+    snapshot_keys = (
+        "branch",
+        "head",
+        "s0_tree",
+        "s0_commit",
+        "b0_tree",
+        "b0_commit",
+        "review_base_commit",
+        "clean",
+    )
+    payload = {
+        "ok": True,
+        "command": "comments",
+        "round": value["id"],
+        "repo_root": value["repo_root"],
+        "snapshot": {key: value[key] for key in snapshot_keys},
+        "comment_digest": comment_digest(comments),
+        "comments": analysis["comments"],
+        "threads": analysis["threads"],
+        "unstructured": analysis["unstructured"],
+        "malformed": analysis["malformed"],
+    }
+    payload.update(_handoff_fields(value["id"]))
+    return payload
+
+
+def _command_handoff(root, arguments):
+    value = _selected(root, arguments)
+    prompt = _handoff_prompt(value["id"])
+    if arguments.copy:
+        run(["pbcopy"], input_bytes=prompt.encode("utf-8"))
+    return {
+        "ok": True,
+        "command": "handoff",
+        "round": value["id"],
+        "repo_root": value["repo_root"],
+        **_handoff_fields(value["id"]),
+        "copied": arguments.copy,
     }
 
 
@@ -169,6 +244,7 @@ def _command_comment(root, arguments, response):
         path=arguments.path,
         start=arguments.start,
         end=arguments.end,
+        side=arguments.side,
     )
     response_value = {
         "ok": True,
@@ -177,7 +253,7 @@ def _command_comment(root, arguments, response):
         "author": author,
         "tuicr": result,
     }
-    if response and arguments.status == "accept":
+    if response and arguments.status == "accept" and arguments.role in ("human", "verifier"):
         command = "tuicr-round accepted --round " + value["id"]
         response_value["warnings"] = [
             {
@@ -192,7 +268,11 @@ def _command_comment(root, arguments, response):
 def _command_accepted(root, arguments):
     value = _selected(root, arguments)
     analysis = analyze_threads(get_comments(root, value))
-    accepted = [thread for thread in analysis["threads"] if thread["status"] == "accept"]
+    accepted = [
+        thread
+        for thread in analysis["threads"]
+        if thread["status"] == "accept" and thread["latest_role"] in ("human", "verifier")
+    ]
     return {
         "ok": True,
         "command": "accepted",
@@ -300,6 +380,10 @@ def main(argv=None, entrypoint=None):
             return _command_open(root, arguments, entrypoint or pathlib.Path(sys.argv[0]).resolve())
         elif arguments.command == "status":
             result = _command_status(root, arguments)
+        elif arguments.command == "comments":
+            result = _command_comments(root, arguments)
+        elif arguments.command == "handoff":
+            result = _command_handoff(root, arguments)
         elif arguments.command == "add":
             result = _command_comment(root, arguments, False)
         elif arguments.command == "respond":

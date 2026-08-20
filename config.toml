@@ -13,6 +13,7 @@ relative_line_numbers = false
 wrap = true
 scroll_offset = 12
 leader = " "
+review_watch_interval_ms = 1000
 
 transparent_background = true
 comment_vim = true
