@@ -4,10 +4,13 @@ import hashlib
 import json
 import os
 import pathlib
+import shutil
+import sys
 
 from .git_baseline import external_environment, git
+from .handoff import handoff_prompt
 from .state import round_lock, update_round
-from .util import RoundError, json_bytes, run
+from .util import RoundError, atomic_write, ensure_dir, json_bytes, run
 
 
 HEADER_PREFIX = "@nvim-review "
@@ -17,16 +20,63 @@ SEVERITIES = ("blocker", "warning", "nit")
 STATUSES = ("open", "accept", "discuss", "reject")
 TYPE_BY_SEVERITY = {"blocker": "issue", "warning": "suggestion", "nit": "pedantic"}
 SEVERITY_BY_NATIVE_TYPE = {"issue": "blocker", "pedantic": "nit", "praise": "nit"}
+PRIVATE_BIN_DIRECTORY = ".tuicr-round-bin"
+PBCOPY_NAME = "pbcopy"
 
 
 def check_tuicr_available():
     run(["tuicr", "--version"])
 
 
-def tuicr_environment(round_value):
+def pbcopy_wrapper_path(round_value: dict) -> pathlib.Path:
+    """Return the deterministic clipboard wrapper path for a round."""
+    return pathlib.Path(round_value["private_home"]) / PRIVATE_BIN_DIRECTORY / PBCOPY_NAME
+
+
+def _pbcopy_wrapper_script(real_pbcopy: str, prompt: str) -> str:
+    return """#!%s
+import subprocess
+import sys
+
+HANDOFF_PROMPT = %r
+REAL_PBCOPY = %r
+URL_PREFIXES = (b"http://", b"https://")
+
+
+def main() -> int:
+    payload = sys.stdin.buffer.read()
+    if HANDOFF_PROMPT not in payload and not payload.startswith(URL_PREFIXES):
+        payload = HANDOFF_PROMPT + b"\\n\\n" + payload
+    completed = subprocess.run([REAL_PBCOPY], input=payload, check=False)
+    return completed.returncode
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+""" % (sys.executable, prompt.encode("utf-8"), real_pbcopy)
+
+
+def prepare_pbcopy_wrapper(round_value: dict) -> pathlib.Path:
+    """Write the private clipboard wrapper used by a newly launched round."""
+    current_path = os.environ.get("PATH", os.defpath)
+    real_pbcopy = shutil.which(PBCOPY_NAME, path=current_path)
+    if real_pbcopy is None:
+        raise RoundError("missing_dependency", "Required executable was not found", {"executable": PBCOPY_NAME})
+    wrapper = pbcopy_wrapper_path(round_value)
+    ensure_dir(wrapper.parent)
+    script = _pbcopy_wrapper_script(str(pathlib.Path(real_pbcopy).resolve()), handoff_prompt(round_value["id"]))
+    atomic_write(wrapper, script, mode=0o700)
+    return wrapper
+
+
+def tuicr_environment(round_value: dict) -> dict:
     value = external_environment(round_value)
     value["HOME"] = round_value["private_home"]
     value["XDG_CONFIG_HOME"] = round_value["xdg_config_home"]
+    wrapper = pbcopy_wrapper_path(round_value)
+    if wrapper.is_file():
+        original_path = value.get("PATH", "")
+        value["PATH"] = str(wrapper.parent) + (os.pathsep + original_path if original_path else "")
     value["GIT_OPTIONAL_LOCKS"] = "0"
     value["GIT_NO_LAZY_FETCH"] = "1"
     return value

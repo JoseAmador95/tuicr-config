@@ -2,6 +2,7 @@ import concurrent.futures
 import json
 import os
 import pathlib
+import sys
 import tempfile
 import textwrap
 import unittest
@@ -116,7 +117,16 @@ class CliProtocolTests(unittest.TestCase):
         commit_all(self.repo)
         write(self.repo / "file.txt", "dirty\n")
         self.state = self.base / "state"
-        result, payload = launcher(self.state, "start", "--repo", self.repo)
+        self.xdg_config = self.base / "xdg-config"
+        self.shared_config = self.xdg_config / "tuicr" / "config.toml"
+        write(self.shared_config, 'appearance = "system"\n\n[export]\nintro = ""\n')
+        result, payload = launcher(
+            self.state,
+            "start",
+            "--repo",
+            self.repo,
+            extra_env={"XDG_CONFIG_HOME": str(self.xdg_config)},
+        )
         self.assertEqual(result.returncode, 0, payload)
         self.start_payload = payload
         self.round_id = payload["round"]
@@ -125,6 +135,7 @@ class CliProtocolTests(unittest.TestCase):
         self.fake_bin.mkdir()
         write(self.fake_bin / "tuicr", FAKE_TUICR, 0o755)
         write(self.fake_bin / "tmux", FAKE_TMUX, 0o755)
+        write(self.fake_bin / "pbcopy", "#!/bin/sh\nexit 0\n", 0o755)
         self.fake_env = {"PATH": str(self.fake_bin) + os.pathsep + os.environ["PATH"]}
 
     def tearDown(self):
@@ -189,10 +200,46 @@ class CliProtocolTests(unittest.TestCase):
         bootstrap = next(line for line in lines if line.startswith("start-server "))
         self.assertIn("exit-empty off", bootstrap)
         self.assertIn("remain-on-exit failed", bootstrap)
+        self.assertIn("status on", bootstrap)
+        self.assertIn(
+            "status-format[0] TUICR-ROUND:%s | y: copy review + UUID" % self.round_id,
+            bootstrap,
+        )
+        self.assertEqual(sum("status-format[0]" in line for line in lines), 1)
         created = next(index for index, line in enumerate(lines) if line.startswith("new-session "))
         restored = next(index for index, line in enumerate(lines) if line == "set-option -g exit-empty on")
         self.assertLess(created, restored)
         self.assertIn("-f /dev/null", " ".join(results[0][1]["attach_argv"]))
+        wrapper = protocol.pbcopy_wrapper_path({"private_home": str(self.home)})
+        self.assertTrue(wrapper.is_file())
+        self.assertTrue(os.access(str(wrapper), os.X_OK))
+        self.assertEqual(self.shared_config.read_text(), 'appearance = "system"\n\n[export]\nintro = ""\n')
+
+        original_wrapper = wrapper.read_bytes()
+        original_inode = wrapper.stat().st_ino
+        result, payload = launcher(self.state, "open", "--round", self.round_id, extra_env=self.fake_env)
+        self.assertEqual(result.returncode, 0, payload)
+        self.assertFalse(payload["created"])
+        self.assertEqual(wrapper.read_bytes(), original_wrapper)
+        self.assertEqual(wrapper.stat().st_ino, original_inode)
+        updated_log = (self.state / "rounds" / self.round_id / "tmux" / "fake-tmux.log").read_text()
+        self.assertEqual(sum("status-format[0]" in line for line in updated_log.splitlines()), 1)
+
+    def test_missing_pbcopy_fails_before_tmux_start(self):
+        no_pbcopy_bin = self.base / "no-pbcopy-bin"
+        no_pbcopy_bin.mkdir()
+        write(no_pbcopy_bin / "tuicr", FAKE_TUICR, 0o755)
+        write(no_pbcopy_bin / "tmux", FAKE_TMUX, 0o755)
+        (no_pbcopy_bin / "python3").symlink_to(sys.executable)
+        environment = {"PATH": str(no_pbcopy_bin)}
+
+        result, payload = launcher(self.state, "open", "--round", self.round_id, extra_env=environment)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(payload["error"]["code"], "missing_dependency")
+        self.assertEqual(payload["error"]["details"], {"executable": "pbcopy"})
+        log = self.state / "rounds" / self.round_id / "tmux" / "fake-tmux.log"
+        self.assertNotIn("new-session", log.read_text())
 
     def test_start_open_combines_capture_and_single_tui_preflight(self):
         result, payload = launcher(

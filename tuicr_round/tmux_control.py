@@ -3,7 +3,8 @@
 import os
 import pathlib
 
-from .protocol import check_tuicr_available, tuicr_environment
+from .handoff import handoff_marker
+from .protocol import check_tuicr_available, prepare_pbcopy_wrapper, tuicr_environment
 from .state import round_lock, update_round
 from .util import RoundError, emit, run
 
@@ -53,6 +54,8 @@ def ensure_session(root, round_value, entrypoint):
                 {"attach": base + ["attach-session", "-t", SESSION_NAME]},
             )
         if not existed:
+            prepare_pbcopy_wrapper(round_value)
+            status_text = "%s | y: copy review + UUID" % handoff_marker(round_value["id"])
             run(
                 base
                 + [
@@ -66,7 +69,12 @@ def ensure_session(root, round_value, entrypoint):
                     "set-option",
                     "-g",
                     "status",
-                    "off",
+                    "on",
+                    ";",
+                    "set-option",
+                    "-g",
+                    "status-format[0]",
+                    status_text,
                     ";",
                     "set-option",
                     "-g",

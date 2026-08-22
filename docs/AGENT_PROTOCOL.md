@@ -16,12 +16,16 @@ two canonical schemas in `schemas/`.
    attaching. A normal tuicr exit such as `q` closes that private session and
    releases every attached surface. A nonzero exit retains the dead pane and
    its output; a later `open` fails visibly with the exact attach command instead
-   of silently replacing it.
+   of silently replacing it. Newly created sessions show the full
+   `TUICR-ROUND:UUID | y: copy review + UUID` marker in their private tmux status
+   line. An already-running session is never restarted or reconfigured.
 3. Poll `tuicr-round status --round UUID` until `session` contains the exact
    slug returned by `tuicr review list`. `status`, `start`, and `comments`
    include the stable `TUICR-ROUND:UUID` handoff marker and canonical Codex
-   prompt. `tuicr-round handoff --round UUID --copy` copies that prompt with
-   `pbcopy`.
+   prompt. In a newly opened round, tuicr's `y`, `Y`, and `:clip` copies include
+   that prompt unless the copied value is an HTTP or HTTPS URL. The URL path is
+   byte-for-byte unchanged. `tuicr-round handoff --round UUID --copy` remains a
+   fallback that copies only the prompt with `pbcopy`.
 4. Read review input only with `tuicr-round comments --round UUID`. It returns
    the digest of the unmodified public JSON plus normalized comments and
    threads. Its `snapshot` object contains the branch, HEAD, S0/B0 trees and
@@ -96,10 +100,14 @@ native session files. Comments enter tuicr only through `tuicr review add`.
 The launcher verifies that tuicr is available by successfully running
 `tuicr --version`; it does not require a particular version string. It uses a
 round-private `HOME`, the real `XDG_CONFIG_HOME`, and an external Git directory
-whose object alternates point read-only at the real common object store. The
-real repository's index, refs, object store, and worktree are never update
-targets. Sparse/split indexes, conflicts, filters/LFS, and partial/promisor
-clones fail closed.
+whose object alternates point read-only at the real common object store. Before
+starting a new TUI, it creates a round-private `pbcopy` wrapper and prepends only
+that wrapper's directory to the TUI process `PATH`. The wrapper delegates to the
+resolved real `pbcopy`, preserves input bytes, and adds the round handoff once to
+non-URL copies. Existing active rounds keep their original environment. The real
+repository's index, refs, object store, and worktree are never update targets.
+Sparse/split indexes, conflicts, filters/LFS, and partial/promisor clones fail
+closed.
 
 Dirty content over 50 MiB is reported as a warning; content over 500 MiB is
 rejected before worktree blobs are hashed. Dirty captures preserve staged `S0`

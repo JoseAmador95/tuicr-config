@@ -9,6 +9,7 @@ import shutil
 import sys
 
 from .git_baseline import resolve_repo, start_rounds
+from .handoff import handoff_fields, handoff_prompt
 from .protocol import (
     add_comment,
     analyze_threads,
@@ -92,18 +93,6 @@ def _xdg_config_home():
     return pathlib.Path(__file__).resolve().parents[2]
 
 
-def _handoff(round_id):
-    return "TUICR-ROUND:" + round_id
-
-
-def _handoff_prompt(round_id):
-    return "Use $tuicr-address-review to process %s." % _handoff(round_id)
-
-
-def _handoff_fields(round_id):
-    return {"handoff": _handoff(round_id), "prompt": _handoff_prompt(round_id)}
-
-
 def _command_start(root, arguments):
     parent, created = start_rounds(arguments.repo, root, _xdg_config_home())
     payload = {
@@ -125,12 +114,12 @@ def _command_start(root, arguments):
                 "round": item["id"],
                 "repo_root": item["repo_root"],
                 "parent_round": item["parent_round"],
-                **_handoff_fields(item["id"]),
+                **handoff_fields(item["id"]),
             }
             for item in created
         ],
     }
-    payload.update(_handoff_fields(parent["id"]))
+    payload.update(handoff_fields(parent["id"]))
     return payload
 
 
@@ -181,7 +170,7 @@ def _command_status(root, arguments):
         "tui_active": tui_active(value),
         "session": session,
     }
-    payload.update(_handoff_fields(value["id"]))
+    payload.update(handoff_fields(value["id"]))
     return payload
 
 
@@ -211,13 +200,13 @@ def _command_comments(root, arguments):
         "unstructured": analysis["unstructured"],
         "malformed": analysis["malformed"],
     }
-    payload.update(_handoff_fields(value["id"]))
+    payload.update(handoff_fields(value["id"]))
     return payload
 
 
 def _command_handoff(root, arguments):
     value = _selected(root, arguments)
-    prompt = _handoff_prompt(value["id"])
+    prompt = handoff_prompt(value["id"])
     if arguments.copy:
         run(["pbcopy"], input_bytes=prompt.encode("utf-8"))
     return {
@@ -225,7 +214,7 @@ def _command_handoff(root, arguments):
         "command": "handoff",
         "round": value["id"],
         "repo_root": value["repo_root"],
-        **_handoff_fields(value["id"]),
+        **handoff_fields(value["id"]),
         "copied": arguments.copy,
     }
 

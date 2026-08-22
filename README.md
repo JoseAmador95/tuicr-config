@@ -12,6 +12,11 @@ Python 3.9 standard-library launcher for isolated synthetic review rounds.
 ./tuicr-round handoff --round UUID --copy
 ```
 
+In a newly opened round, `y` or `:clip` copies the normal tuicr review together
+with its canonical `TUICR-ROUND:UUID` handoff instruction. The private tmux
+status line shows the same marker; `handoff --copy` remains available as a
+fallback.
+
 See [the agent protocol](docs/AGENT_PROTOCOL.md) for the complete lifecycle,
 native and structured comment handling, visible PLAN/RESULT replies, safety
 properties, and canonical schema links.
