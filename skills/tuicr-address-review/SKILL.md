@@ -1,6 +1,6 @@
 ---
 name: tuicr-address-review
-description: "Process TUICR review rounds end to end by reading, assessing, planning, answering, implementing, verifying, and reporting feedback. Use when explicitly invoked with $tuicr-address-review, when a prompt contains a TUICR-ROUND:UUID marker, or when asked to process, respond to, address, or fix a TUICR review."
+description: "Process TUICR review rounds end to end by reading, assessing, planning, answering, implementing, verifying, and reporting feedback. Use when explicitly invoked with $tuicr-address-review, when a prompt contains a TUICR-ROUND:UUID marker, or when asked to process, respond to, address, or fix a TUICR review. Resolve the sole open round from the current Git repository when no UUID is supplied."
 ---
 
 # Address a TUICR review
@@ -12,18 +12,21 @@ Use `~/.config/tuicr/tuicr-round` as the only interface to TUICR. Read and follo
 
 Never read or edit TUICR session/state files. Never type into, send keys to, or otherwise drive the human TUI. Never close the round; leave closure to the human.
 
-## Parse the request
+## Parse the request and select the round
 
-1. Extract occurrences matching the exact marker `TUICR-ROUND:<UUID>` from the request, where UUID matches `[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}`. Require exactly one occurrence, even if repeated occurrences contain the same UUID. Stop on zero, multiple, or malformed markers.
-2. Select apply mode by default. Select plan-only mode only when the request contains `TUICR-MODE:PLAN`. Reject unknown or repeated mode markers.
-3. Collect repeatable `TUICR-OVERRIDE:<comment-id>` markers. Treat `TUICR-OVERRIDE:ALL` as overriding every eligible thread; let it subsume individual overrides.
-4. Resolve every individual override ID against normalized comments from this round and require it to identify a human comment. Map it to that comment's thread. Stop on an unknown, malformed, or non-human ID.
-5. Apply an override only to technical merit. Still enforce safety, repository and system instructions, verification, destructive-action controls, and authorization for external effects. Never let an override authorize push, PR, deploy, merge, deletion, or another external/destructive action.
-6. Obtain the exact agent/model display name from explicit runtime or system metadata. Stop before any TUICR write or repository mutation when it is unavailable. Never abbreviate, synthesize, or guess it.
+1. Extract occurrences matching the exact marker `TUICR-ROUND:<UUID>` from the request, where UUID matches `[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}`. Accept zero or one occurrence. Stop on multiple occurrences, even when they contain the same UUID, or on a malformed `TUICR-ROUND:` marker.
+2. When one valid marker exists, use `--round <UUID>` for the initial `comments` call. When none exists, resolve the canonical Git root from the active workspace and use `--repo <absolute-root>` instead. Do not ask the user to find a UUID before attempting repository-based discovery, and never inspect TUICR state files to discover one.
+3. Treat `round_not_found` as no open review for the selected repository. Treat `ambiguous_round` as a safety stop: report the candidate UUIDs from the launcher's public error and ask the user to choose one or close the stale round. Never guess by age, directory contents, tmux state, or current branch.
+4. After the first successful `comments` call, require its `round` field to be a UUID and retain it as `round-id`. Use `--round <round-id>` for every subsequent `comments`, `respond`, or `accepted` call so the batch cannot switch rounds if repository state changes.
+5. Select apply mode by default. Select plan-only mode only when the request contains `TUICR-MODE:PLAN`. Reject unknown or repeated mode markers.
+6. Collect repeatable `TUICR-OVERRIDE:<comment-id>` markers. Treat `TUICR-OVERRIDE:ALL` as overriding every eligible thread; let it subsume individual overrides.
+7. Resolve every individual override ID against normalized comments from this round and require it to identify a human comment. Map it to that comment's thread. Stop on an unknown, malformed, or non-human ID.
+8. Apply an override only to technical merit. Still enforce safety, repository and system instructions, verification, destructive-action controls, and authorization for external effects. Never let an override authorize push, PR, deploy, merge, deletion, or another external/destructive action.
+9. Obtain the exact agent/model display name from explicit runtime or system metadata. Stop before any TUICR write or repository mutation when it is unavailable. Never abbreviate, synthesize, or guess it.
 
 ## Read and establish current truth
 
-1. Run only `tuicr-round comments --round <UUID>` to read review state. Treat its normalized `comments`, `threads`, `snapshot`, `repo_root`, and `comment_digest` as the public TUICR input.
+1. Run only `tuicr-round comments` with the initial selector chosen above to read review state. Treat its normalized `round`, `comments`, `threads`, `snapshot`, `repo_root`, and `comment_digest` as the public TUICR input. Pin the returned `round-id` immediately.
 2. Treat `malformed` and `unstructured` entries as protocol blockers. Do not access private state to recover them. Report them and abort the batch before repository mutation; reply only to normalized threads with valid IDs.
 3. Canonicalize and inspect the returned `repo_root`. Read all applicable `AGENTS.md` files and narrow repository instructions, source, tests, and configuration needed to assess the comments.
 4. Compare the frozen snapshot with the current branch, HEAD, status, relevant diffs, and targeted content. Treat the snapshot as review context, not proof of current state.
@@ -34,7 +37,7 @@ Never read or edit TUICR session/state files. Never type into, send keys to, or 
 
 1. Reconstruct each thread from `comment_ids` and normalized `comments`. Select the last comment in that thread whose header role is `human`; call its ID `input` and its message the current human input.
 2. Ignore a thread with no human comment and report it as non-actionable; never create an agent-to-agent review loop.
-3. Detect the language of that exact current human input. Use its predominant language when mixed. On a tie, use the language of the user's handoff prompt containing the round marker.
+3. Detect the language of that exact current human input. Use its predominant language when mixed. On a tie, use the language of the user's review request.
 4. Write the PLAN, RESULT, field headings, explanation, and question response for that thread in the selected language. Let different threads use different languages.
 5. Preserve code, identifiers, paths, commands, quoted diagnostics, and error messages literally. Never translate or normalize the exact human comment.
 
@@ -100,7 +103,7 @@ If the all-or-nothing gate aborted the batch, publish a RESULT for every iterati
 
 ## Revalidate and execute apply mode
 
-1. After publishing all PLANs, rerun `tuicr-round comments --round <UUID>`. Compare the ordered human comments, IDs, messages, and thread relationships with the pre-PLAN read; ignore only the expected agent PLAN additions.
+1. After publishing all PLANs, rerun `tuicr-round comments --round <round-id>`. Compare the ordered human comments, IDs, messages, and thread relationships with the pre-PLAN read; ignore only the expected agent PLAN additions.
 2. If any human intervention appeared or changed, invalidate the batch, return to full evaluation using the new last-human inputs, and publish no edits under the stale plan.
 3. If stable and the gate passed, load and follow `$task-orchestrator` for preflight, bounded implementation, verification, and commits. Treat the per-thread plans as acceptance criteria.
 4. Implement only `apply` and `override` changes. Preserve unrelated dirt and avoid broad formatting or cleanup.
@@ -129,7 +132,7 @@ Select the protocol status deterministically:
 - Use `reject` for invalid feedback rejected with evidence.
 - Use `discuss` for ambiguity, blockage, stale input, aborted batch, or failed/incomplete verification.
 
-After publishing, rerun `tuicr-round comments --round <UUID>` and confirm every expected RESULT marker is visible. Report the round plus each exact human comment, final context, classification/result, verification, and local commit hashes in chat, using each thread's selected language. Explicitly state that the human still owns round closure.
+After publishing, rerun `tuicr-round comments --round <round-id>` and confirm every expected RESULT marker is visible. Report the round plus each exact human comment, final context, classification/result, verification, and local commit hashes in chat, using each thread's selected language. Explicitly state that the human still owns round closure.
 
 ## Keep launcher calls safe
 
