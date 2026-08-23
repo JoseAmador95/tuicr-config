@@ -136,6 +136,8 @@ Select the protocol status deterministically:
 
 After publishing, rerun `tuicr-round comments --round <round-id>` and confirm every expected RESULT marker is visible. Report the round plus each exact human comment, final context, classification/result, verification, and local commit hashes in chat, using each thread's selected language. Explicitly state that the human still owns round closure.
 
+Treat the per-thread chat report as a required traceability artifact, not as an optional summary. Render a separate block for every thread with clearly labeled `Comment`, `Context`, and `Result` fields. Copy the complete current human comment verbatim; describe enough repository and review context to understand the decision without reopening TUICR; then state the outcome or solution. Include verification and commits when applicable. Never replace these blocks with an aggregate list or table that reports only classifications, results, files, or commit hashes, and never omit Comment or Context for brevity.
+
 ## Keep launcher calls safe
 
 Construct every launcher invocation as an argument vector. Never concatenate a review comment, generated message, path, ID, or author into shell syntax. When only a shell-string tool is available, place message data in a private temporary file through a non-interpolating mechanism and use a fixed argv wrapper to read it and call the launcher; remove the temporary file afterward. Quote all trusted scalar arguments and validate IDs before use.
