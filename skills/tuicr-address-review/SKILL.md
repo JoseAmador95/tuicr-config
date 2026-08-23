@@ -55,6 +55,8 @@ Evaluate every current human input against the current repository before the fir
 
 Answer all explicit questions during this assessment. Do not manufacture a repository edit for `already-satisfied`, `answer`, or `praise`.
 
+Treat a `rationale` comment, or a question that compares the current choice with a proposed alternative, as a decision request rather than selecting `answer` solely because it is interrogative. Inspect the relevant evidence, distinguish a verified reason from an inference, and compare the tradeoffs of the current choice, the proposal, and any better third option. Classify it as `apply` when the proposed or third option is better, `already-satisfied` when the current choice is better, or `discuss/blocked` when the evidence is insufficient. A pure `question` that only requests missing information or clarifies intent may remain `answer`.
+
 Apply an all-or-nothing mutation gate. If any normalized thread remains `reject` or `discuss/blocked`, or any malformed/unstructured item exists, abort repository mutation and commits for the entire batch. Allow an override to replace only a technical-merit `reject`; do not use it to erase ambiguity, failed safety checks, missing authorization, or failed verification.
 
 ## Enforce iteration identity and idempotence

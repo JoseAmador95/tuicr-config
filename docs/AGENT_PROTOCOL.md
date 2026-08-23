@@ -77,10 +77,19 @@ target when no target flags are supplied; `--path`, `--start`, `--end`, and
 The `comments` command exposes each usable item with its raw TUICR object,
 human-readable message, actual or synthetic protocol header, `native` or
 `protocol` origin, original `comment_type`, and a normalized target containing
-path, start, end, side, and display location. Native `issue` comments map to
-`blocker`; `pedantic` and `praise` map to `nit`; every other native type maps to
-`warning`. A native author comes from `username` or `author`, with
-`Human reviewer` as the fallback.
+path, start, end, side, and display location. The native taxonomy and severity
+mapping are:
+
+- `issue` maps to `blocker`.
+- `suggestion`, `rationale`, and `question` map to `warning`.
+- `pedantic` and `praise` map to `nit`.
+
+`rationale` requests an explanation of the current choice, comparison with a
+proposed alternative, and adoption of the better option. `question` requests
+missing information or clarification without implying a change. For historical
+compatibility, a missing, empty, or unknown native type remains a valid
+`human/open` thread root and maps to `warning`. A native author comes from
+`username` or `author`, with `Human reviewer` as the fallback.
 
 ## Batch result interchange
 

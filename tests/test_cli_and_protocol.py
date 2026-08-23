@@ -474,6 +474,34 @@ class CliProtocolTests(unittest.TestCase):
         self.assertEqual(analysis["comments"][1]["header"]["severity"], "warning")
         self.assertEqual(analysis["comments"][1]["header"]["author"], "Alice")
 
+    def test_native_rationale_is_thread_root_and_untyped_comments_remain_warnings(self):
+        comments = [
+            {
+                "id": "rationale",
+                "content": "Why use a tuple instead of a mapping?",
+                "comment_type": "rationale",
+                "author": "Reviewer",
+            },
+            {"id": "missing", "content": "Historical comment"},
+            {"id": "none", "content": "Explicitly untyped comment", "comment_type": None},
+        ]
+
+        analysis = protocol.analyze_threads(comments)
+
+        rationale = analysis["comments"][0]
+        self.assertEqual(rationale["comment_type"], "rationale")
+        self.assertEqual(rationale["origin"], "native")
+        self.assertEqual(rationale["header"]["role"], "human")
+        self.assertEqual(rationale["header"]["status"], "open")
+        self.assertEqual(rationale["header"]["severity"], "warning")
+        threads = {thread["root_id"]: thread for thread in analysis["threads"]}
+        self.assertEqual(threads["rationale"]["root"], rationale)
+        self.assertEqual(threads["rationale"]["comment_ids"], ["rationale"])
+        for comment in analysis["comments"][1:]:
+            with self.subTest(comment=comment["id"]):
+                self.assertIsNone(comment["comment_type"])
+                self.assertEqual(comment["header"]["severity"], "warning")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -21,7 +21,8 @@ comment_vim = true
 comment_types = [
   { id = "issue", label = "ISSUE", color = "red", definition = "must be fixed before merge" },
   { id = "suggestion", label = "SUGGESTION", color = "yellow", definition = "optional improvement, non-blocking" },
-  { id = "question", label = "QUESTION", color = "blue", definition = "ask to clarify intent or a decision" },
+  { id = "rationale", label = "RATIONALE", color = "magenta", definition = "explain the current choice, compare it with the proposed alternative, and adopt the better option" },
+  { id = "question", label = "QUESTION", color = "blue", definition = "request missing information or clarify intent without implying a change" },
   { id = "pedantic", label = "PEDANTIC", color = "#d19a66", definition = "style, naming or format nitpick, safe to ignore" },
   { id = "praise", label = "PRAISE", color = "green", definition = "highlight a good implementation or design decision" },
 ]

@@ -19,7 +19,14 @@ ROLES = ("human", "agent", "verifier")
 SEVERITIES = ("blocker", "warning", "nit")
 STATUSES = ("open", "accept", "discuss", "reject")
 TYPE_BY_SEVERITY = {"blocker": "issue", "warning": "suggestion", "nit": "pedantic"}
-SEVERITY_BY_NATIVE_TYPE = {"issue": "blocker", "pedantic": "nit", "praise": "nit"}
+SEVERITY_BY_NATIVE_TYPE = {
+    "issue": "blocker",
+    "suggestion": "warning",
+    "rationale": "warning",
+    "question": "warning",
+    "pedantic": "nit",
+    "praise": "nit",
+}
 PRIVATE_BIN_DIRECTORY = ".tuicr-round-bin"
 PBCOPY_NAME = "pbcopy"
 
