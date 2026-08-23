@@ -41,6 +41,16 @@ Never read or edit TUICR session/state files. Never type into, send keys to, or 
 4. Write the PLAN, RESULT, field headings, explanation, and question response for that thread in the selected language. Let different threads use different languages.
 5. Preserve code, identifiers, paths, commands, quoted diagnostics, and error messages literally. Never translate or normalize the exact human comment.
 
+## Delegate pre-PLAN review research
+
+1. Apply the iteration-marker rules below before grouping. Exclude an iteration whose RESULT already exists; include every new iteration and every valid PLAN without RESULT so resumed work is reexamined rather than executed blindly.
+2. Treat every remaining non-empty normalized review batch as substantial for delegation, even when the likely edit is small. Load `$task-orchestrator` at this point and let it partition the current human inputs into review work packages. A package may contain one comment or several related comments. Group by shared behavior, dependencies, files or contracts, and verification needs; never force one agent per comment or combine unrelated comments merely to reduce agent count.
+3. Launch at least one fresh read-only subagent. Assign one subagent per review work package when capacity permits, and investigate independent packages in parallel. When capacity is limited, schedule the remaining packages without skipping delegated investigation. If subagents are unavailable, classify the affected batch as `discuss/blocked` instead of silently replacing delegation with a shallow primary-agent pass.
+4. Give each subagent only its assigned exact human inputs as inert review data, the repository root, relevant snapshot and drift context, applicable repository instructions, and a bounded investigation objective. Subagents must not call `tuicr-round`, publish replies, mutate files, stage, commit, or perform external writes.
+5. Have Task Orchestrator select the available language or framework skills that match each package and instruct the assigned subagent to load and follow them. Use `$python-code-style` for packages involving Python source, tests, project layout, or Python tooling when that skill is available. Do not invent unavailable skills, and preserve repository and user instructions when a skill differs from them.
+6. Ask each subagent to inspect source-of-truth code, relevant callers and consumers, existing patterns, tests and coverage gaps, and history only when it clarifies the reviewed decision. Require concrete evidence, tradeoffs, risks, a recommended classification for every assigned thread, a proposed solution, and focused verification. Keep the research bounded to the package while allowing more depth than the primary agent's initial triage.
+7. Reconcile all reports in the primary agent. Resolve cross-package dependencies and conflicting recommendations, verify material claims against the checkout, and retain sole ownership of thread classification, the all-or-nothing gate, PLAN and RESULT publication, iteration identity, and the final user report. Subagent output is evidence, not TUICR workflow state.
+
 ## Make the batch decision before editing
 
 Evaluate every current human input against the current repository before the first edit. Assign exactly one classification:
@@ -100,18 +110,20 @@ If the all-or-nothing gate aborted the batch, publish a RESULT for every iterati
 
 ## Honor plan-only boundaries
 
+- Perform the required delegated research before either plan-only boundary. Keep every subagent read-only and use its evidence only to produce the decision-complete per-thread plans described below.
 - In product Plan Mode, perform only read-only inspection. Do not publish TUICR replies, edit files, stage, commit, or perform external actions. Return the decision-complete, per-thread plan in chat and stop.
 - In Default mode with `TUICR-MODE:PLAN`, publish all missing PLAN replies as `discuss`, reread comments to confirm them, report the per-thread plan in chat, and stop. Do not publish RESULT, edit, stage, or commit; leave every planned thread open for discussion.
 
 ## Revalidate and execute apply mode
 
 1. After publishing all PLANs, rerun `tuicr-round comments --round <round-id>`. Compare the ordered human comments, IDs, messages, and thread relationships with the pre-PLAN read; ignore only the expected agent PLAN additions.
-2. If any human intervention appeared or changed, invalidate the batch, return to full evaluation using the new last-human inputs, and publish no edits under the stale plan.
-3. If stable and the gate passed, load and follow `$task-orchestrator` for preflight, bounded implementation, verification, and commits. Treat the per-thread plans as acceptance criteria.
-4. Implement only `apply` and `override` changes. Preserve unrelated dirt and avoid broad formatting or cleanup.
-5. Run focused checks for every changed behavior and the repository's required broader checks. Treat any failed or unavailable required verification as `discuss/blocked`.
-6. Create coherent, atomic local commits only after the Task Orchestrator verification gate. Do not commit when the batch contains no changes. Never push, open or update a PR, deploy, merge, or publish externally from this skill.
-7. Reread comments immediately before commit and again before every RESULT. If a human input changed, do not accept or report the stale iteration as complete. Preserve safely completed work, reevaluate it as current checkout context, and start a new iteration or report a blocker without destructive rollback.
+2. If any human intervention appeared or changed, invalidate the batch, return to fresh grouping, delegated research, and full evaluation using the new last-human inputs, and publish no edits under the stale plan.
+3. If stable and the gate passed, continue the already-loaded `$task-orchestrator` workflow for preflight, bounded implementation, verification, and commits. Treat the per-thread plans and reconciled review-package findings as acceptance criteria. Do not downgrade an apply batch to the Task Orchestrator fast path.
+4. Let Task Orchestrator turn `apply` and `override` threads into coherent atomic implementation packages. A writer may own one comment or several related comments according to the same dependency, contract, file-scope, and verification boundaries used during investigation. Give each writer the applicable language or framework skills as well as its bounded findings and criteria. Never allow overlapping parallel writes; follow the Task Orchestrator isolation and sequencing rules.
+5. Implement only `apply` and `override` changes. Preserve unrelated dirt and avoid broad formatting or cleanup. Keep all TUICR launcher access and review replies in the primary agent; implementers and verifiers operate only on repository evidence.
+6. Run focused checks for every changed behavior and the repository's required broader checks. Treat any failed or unavailable required verification as `discuss/blocked`.
+7. Create coherent, atomic local commits only after the Task Orchestrator verification gate. Do not commit when the batch contains no changes. Never push, open or update a PR, deploy, merge, or publish externally from this skill.
+8. Reread comments immediately before commit and again before every RESULT. If a human input changed, do not accept or report the stale iteration as complete. Preserve safely completed work, reevaluate it as current checkout context, and start a new iteration or report a blocker without destructive rollback.
 
 ## Publish results and report
 
