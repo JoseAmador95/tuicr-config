@@ -145,11 +145,64 @@ class CliProtocolTests(unittest.TestCase):
         result, payload = launcher(self.state, "status", extra_env=self.fake_env)
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(payload["error"]["code"], "invalid_arguments")
+        result, payload = launcher(
+            self.state,
+            "status",
+            "--round",
+            self.round_id,
+            "--all",
+            extra_env=self.fake_env,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(payload["error"]["code"], "invalid_arguments")
         second, second_payload = launcher(self.state, "start", "--repo", self.repo)
         self.assertEqual(second.returncode, 0, second_payload)
         result, payload = launcher(self.state, "status", "--repo", self.repo, extra_env=self.fake_env)
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(payload["error"]["code"], "ambiguous_round")
+
+    def test_status_all_lists_open_rounds_and_allows_no_matches(self):
+        """The explicit all mode returns reusable legacy status payloads."""
+        second, second_payload = launcher(self.state, "start", "--repo", self.repo)
+        self.assertEqual(second.returncode, 0, second_payload)
+
+        result, payload = launcher(
+            self.state,
+            "status",
+            "--repo",
+            self.repo,
+            "--all",
+            extra_env=self.fake_env,
+        )
+
+        self.assertEqual(result.returncode, 0, payload)
+        self.assertEqual(payload["command"], "status")
+        self.assertEqual(payload["repo_root"], str(self.repo.resolve()))
+        expected_rounds = sorted((self.round_id, second_payload["round"]))
+        self.assertEqual([item["round"] for item in payload["rounds"]], expected_rounds)
+        for item in payload["rounds"]:
+            legacy_result, legacy_payload = launcher(
+                self.state,
+                "status",
+                "--round",
+                item["round"],
+                extra_env=self.fake_env,
+            )
+            self.assertEqual(legacy_result.returncode, 0, legacy_payload)
+            self.assertEqual(item, legacy_payload)
+
+        other = init_repo(self.base / "other")
+        result, payload = launcher(
+            self.state,
+            "status",
+            "--repo",
+            other,
+            "--all",
+            extra_env=self.fake_env,
+        )
+        self.assertEqual(result.returncode, 0, payload)
+        self.assertEqual(payload["repo_root"], str(other.resolve()))
+        self.assertEqual(payload["rounds"], [])
 
     def test_concurrent_add_is_serialized_and_header_is_exact(self):
         arguments = (
@@ -169,6 +222,199 @@ class CliProtocolTests(unittest.TestCase):
             '@nvim-review {"version":1,"role":"agent","author":"Agent 7","severity":"blocker","status":"open","reply_to":null}',
         )
         self.assertEqual(payloads[0]["type"], "issue")
+
+    def test_delivery_key_reuses_the_existing_receipt_after_a_local_save_failure(self):
+        delivery_key = "native-review-item-1"
+        content = (
+            protocol.header(
+                "agent",
+                "Agent 7",
+                "blocker",
+                "open",
+                None,
+                delivery_key,
+            )
+            + "\nfinding"
+        )
+        comments = self.base / "delivered-comments.json"
+        comments.write_text(
+            json.dumps(
+                [
+                    {
+                        "id": "already-added",
+                        "content": content,
+                        "comment_type": "issue",
+                        "file": "file.txt",
+                        "line": 1,
+                        "side": "new",
+                    }
+                ]
+            )
+        )
+        environment = dict(self.fake_env)
+        environment["FAKE_COMMENTS"] = str(comments)
+
+        result, payload = launcher(
+            self.state,
+            "add",
+            "--round",
+            self.round_id,
+            "--role",
+            "agent",
+            "--author",
+            "Agent 7",
+            "--severity",
+            "blocker",
+            "--comment-type",
+            "issue",
+            "--delivery-key",
+            delivery_key,
+            "--path",
+            "file.txt",
+            "--start",
+            "1",
+            "finding",
+            extra_env=environment,
+        )
+
+        self.assertEqual(result.returncode, 0, payload)
+        self.assertEqual(payload["tuicr"]["id"], "already-added")
+        self.assertFalse((self.home / "adds.jsonl").exists())
+
+        result, payload = launcher(
+            self.state,
+            "add",
+            "--round",
+            self.round_id,
+            "--role",
+            "agent",
+            "--author",
+            "Agent 7",
+            "--severity",
+            "blocker",
+            "--comment-type",
+            "issue",
+            "--delivery-key",
+            delivery_key,
+            "--path",
+            "file.txt",
+            "--start",
+            "1",
+            "changed finding",
+            extra_env=environment,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(payload["error"]["code"], "delivery_key_conflict")
+
+    def test_all_native_comment_types_preserve_the_protocol_header(self):
+        """Every configured native type retains its exact protocol severity."""
+        for comment_type, severity in protocol.SEVERITY_BY_NATIVE_TYPE.items():
+            result, payload = launcher(
+                self.state,
+                "add",
+                "--round",
+                self.round_id,
+                "--severity",
+                severity,
+                "--comment-type",
+                comment_type,
+                comment_type,
+                extra_env=self.fake_env,
+            )
+            self.assertEqual(result.returncode, 0, payload)
+
+        additions = [
+            json.loads(line)
+            for line in (self.home / "adds.jsonl").read_text().splitlines()
+        ]
+        self.assertEqual(len(additions), len(protocol.SEVERITY_BY_NATIVE_TYPE))
+        for addition, (comment_type, severity) in zip(
+            additions, protocol.SEVERITY_BY_NATIVE_TYPE.items()
+        ):
+            self.assertEqual(addition["type"], comment_type)
+            first_line = addition["content"].splitlines()[0]
+            self.assertTrue(first_line.startswith(protocol.HEADER_PREFIX))
+            metadata = json.loads(first_line[len(protocol.HEADER_PREFIX) :])
+            self.assertEqual(
+                set(metadata),
+                {"version", "role", "author", "severity", "status", "reply_to"},
+            )
+            self.assertEqual(metadata["severity"], severity)
+
+    def test_omitted_comment_type_preserves_legacy_defaults(self):
+        """Calls without a native type retain the historical severity mapping."""
+        for severity in protocol.TYPE_BY_SEVERITY:
+            result, payload = launcher(
+                self.state,
+                "add",
+                "--round",
+                self.round_id,
+                "--severity",
+                severity,
+                severity,
+                extra_env=self.fake_env,
+            )
+            self.assertEqual(result.returncode, 0, payload)
+
+        additions = [
+            json.loads(line)
+            for line in (self.home / "adds.jsonl").read_text().splitlines()
+        ]
+        self.assertEqual(
+            [addition["type"] for addition in additions],
+            list(protocol.TYPE_BY_SEVERITY.values()),
+        )
+
+    def test_comment_type_must_match_the_supplied_severity(self):
+        """Incompatible native type and severity pairs fail before TUICR writes."""
+        for comment_type, expected_severity in protocol.SEVERITY_BY_NATIVE_TYPE.items():
+            severity = next(
+                item for item in protocol.SEVERITIES if item != expected_severity
+            )
+            result, payload = launcher(
+                self.state,
+                "add",
+                "--round",
+                self.round_id,
+                "--severity",
+                severity,
+                "--comment-type",
+                comment_type,
+                "mismatch",
+                extra_env=self.fake_env,
+            )
+            with self.subTest(comment_type=comment_type, severity=severity):
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(payload["error"]["code"], "invalid_comment_type")
+                self.assertEqual(
+                    payload["error"]["details"],
+                    {
+                        "comment_type": comment_type,
+                        "severity": severity,
+                        "expected_severity": expected_severity,
+                    },
+                )
+        self.assertFalse((self.home / "adds.jsonl").exists())
+
+    def test_option_like_comment_values_remain_literal(self):
+        """Argparse never reinterprets trusted text fields as launcher flags."""
+        result, payload = launcher(
+            self.state,
+            "add",
+            "--round",
+            self.round_id,
+            "--author=--status",
+            "--severity=warning",
+            "--comment-type=question",
+            "--path=--file.py",
+            "--",
+            "--status",
+            extra_env=self.fake_env,
+        )
+        self.assertEqual(result.returncode, 0, payload)
+        addition = json.loads((self.home / "adds.jsonl").read_text().splitlines()[0])
+        self.assertEqual(addition["file"], "--file.py")
+        self.assertEqual(addition["content"].splitlines()[-1], "--status")
 
     def test_agent_author_and_target_validation(self):
         result, payload = launcher(
@@ -398,7 +644,8 @@ class CliProtocolTests(unittest.TestCase):
 
         result, payload = launcher(
             self.state, "respond", "--round", self.round_id, "--role", "agent",
-            "--author", "Codex GPT-5", "--severity", "nit", "--reply-to", "native",
+            "--author", "Codex GPT-5", "--severity", "nit", "--comment-type", "praise",
+            "--reply-to", "native",
             "PLAN", extra_env=environment,
         )
         self.assertEqual(result.returncode, 0, payload)
@@ -417,6 +664,8 @@ class CliProtocolTests(unittest.TestCase):
         self.assertEqual(additions[1]["line"], 1)
         self.assertEqual(additions[1]["side"], "new")
         self.assertNotIn("start_line", additions[1])
+        self.assertEqual(additions[0]["type"], "praise")
+        self.assertEqual(additions[1]["type"], "pedantic")
 
     def test_respond_rejects_malformed_target(self):
         comments_path = self.base / "comments.json"
