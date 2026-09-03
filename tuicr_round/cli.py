@@ -11,6 +11,7 @@ import sys
 from .git_baseline import resolve_repo, start_rounds
 from .handoff import handoff_fields, handoff_prompt
 from .protocol import (
+    SEVERITY_BY_NATIVE_TYPE,
     add_comment,
     analyze_threads,
     check_tuicr_available,
@@ -32,6 +33,7 @@ class JsonArgumentParser(argparse.ArgumentParser):
 
 
 def _parser():
+    """Build the public tuicr-round argument parser."""
     parser = JsonArgumentParser(prog="tuicr-round", description="Isolated synthetic review rounds for tuicr")
     commands = parser.add_subparsers(dest="command", required=True, parser_class=JsonArgumentParser)
 
@@ -40,6 +42,7 @@ def _parser():
     start.add_argument("--open", action="store_true", dest="open_after_start")
 
     def selector(command):
+        """Add the shared exact-round or repository selector."""
         group = command.add_mutually_exclusive_group(required=True)
         group.add_argument("--round")
         group.add_argument("--repo")
@@ -48,6 +51,7 @@ def _parser():
     selector(opened)
     status = commands.add_parser("status", help="show round and exact tuicr session state")
     selector(status)
+    status.add_argument("--all", action="store_true", dest="all_rounds")
     comments = commands.add_parser("comments", help="read normalized public review comments")
     selector(comments)
     handoff = commands.add_parser("handoff", help="produce the canonical Codex handoff prompt")
@@ -55,10 +59,13 @@ def _parser():
     handoff.add_argument("--copy", action="store_true")
 
     def comment_arguments(command, response=False):
+        """Add the shared structured-comment arguments."""
         selector(command)
         command.add_argument("--role", choices=("human", "agent", "verifier"), default="human")
         command.add_argument("--author")
         command.add_argument("--severity", choices=("blocker", "warning", "nit"), required=True)
+        command.add_argument("--comment-type", choices=tuple(SEVERITY_BY_NATIVE_TYPE))
+        command.add_argument("--delivery-key")
         command.add_argument("--status", choices=("open", "accept", "discuss", "reject"), default="discuss" if response else "open")
         if response:
             command.add_argument("--reply-to", required=True)
@@ -158,8 +165,8 @@ def _command_open(root, arguments, entrypoint):
     return _open_value(root, _selected(root, arguments), entrypoint)
 
 
-def _command_status(root, arguments):
-    value = _selected(root, arguments)
+def _status_payload(root, value):
+    """Build the existing public status payload for one open round."""
     session = resolve_session(root, value)
     payload = {
         "ok": True,
@@ -172,6 +179,27 @@ def _command_status(root, arguments):
     }
     payload.update(handoff_fields(value["id"]))
     return payload
+
+
+def _command_status_all(root, arguments):
+    """Return status for every open round matching one repository."""
+    if arguments.round is not None:
+        raise RoundError("invalid_arguments", "--all requires --repo")
+    repo = resolve_repo(arguments.repo)
+    repo_root = str(repo)
+    rounds = [
+        _status_payload(root, value)
+        for value in iter_rounds(root)
+        if value.get("repo_root") == repo_root and not value.get("closed_at")
+    ]
+    return {"ok": True, "command": "status", "repo_root": repo_root, "rounds": rounds}
+
+
+def _command_status(root, arguments):
+    """Return one legacy status payload or explicitly list all open rounds."""
+    if arguments.all_rounds:
+        return _command_status_all(root, arguments)
+    return _status_payload(root, _selected(root, arguments))
 
 
 def _command_comments(root, arguments):
@@ -220,6 +248,7 @@ def _command_handoff(root, arguments):
 
 
 def _command_comment(root, arguments, response):
+    """Add one root comment or response through the launcher contract."""
     value = _selected(root, arguments)
     result, author, payload = add_comment(
         root,
@@ -229,11 +258,13 @@ def _command_comment(root, arguments, response):
         arguments.severity,
         arguments.status,
         arguments.message,
+        comment_type=arguments.comment_type,
         reply_to=arguments.reply_to if response else None,
         path=arguments.path,
         start=arguments.start,
         end=arguments.end,
         side=arguments.side,
+        delivery_key=arguments.delivery_key,
     )
     response_value = {
         "ok": True,

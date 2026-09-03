@@ -26,6 +26,9 @@ two canonical schemas in `schemas/`.
    that prompt unless the copied value is an HTTP or HTTPS URL. The URL path is
    byte-for-byte unchanged. `tuicr-round handoff --round UUID --copy` remains a
    fallback that copies only the prompt with `pbcopy`.
+   `tuicr-round status --repo ROOT --all` discovers every open round for the
+   normalized repository and succeeds with an empty `rounds` list when none
+   exist. Each entry is the same status object returned for an exact UUID.
 4. Read review input only with `tuicr-round comments --round UUID`. It returns
    the digest of the unmodified public JSON plus normalized comments and
    threads. Its `snapshot` object contains the branch, HEAD, S0/B0 trees and
@@ -51,7 +54,9 @@ two canonical schemas in `schemas/`.
    `--confirm TOKEN`. A changed comment set makes the token stale.
 
 Every noninteractive result is one compact JSON object. Selection ambiguity is
-an error: use `--round UUID` when more than one open round exists for a repo.
+an error except for explicit `status --repo ROOT --all` discovery; otherwise use
+`--round UUID` when more than one open round exists for a repo. `--all` cannot be
+combined with `--round`.
 
 ## Comments
 
@@ -67,6 +72,17 @@ human-readable message starts on the next line. Root findings have a null
 `reply_to`; responses name the tuicr comment `id` they answer. Severities map to
 tuicr types as follows: `blocker` to `issue`, `warning` to `suggestion`, and
 `nit` to `pedantic`.
+
+`add` and `respond` accept an optional `--comment-type` of `issue`,
+`suggestion`, `rationale`, `question`, `pedantic`, or `praise`. The required
+`--severity` remains in the unchanged protocol header and must match the native
+mapping below. Omitting `--comment-type` retains the default severity mapping
+above.
+
+Native Neovim reviews pass a stable `--delivery-key` for each local comment.
+The launcher returns the existing TUICR receipt when the same comment is retried
+after a local save failure, and rejects reuse of that key for different content.
+Callers that do not need retry-safe delivery may omit it.
 
 Targets are repository-relative POSIX paths. Positions are one-based. A file
 without a position creates a file comment; omit the path for a review comment.

@@ -293,7 +293,7 @@ def resolve_author(round_value, role, author):
     return result.stdout.decode("utf-8", "replace").strip()
 
 
-def header(role, author, severity, status, reply_to):
+def header(role, author, severity, status, reply_to, delivery_key=None):
     if severity not in SEVERITIES:
         raise RoundError("invalid_severity", "Unsupported severity", {"severity": severity})
     if status not in STATUSES:
@@ -308,7 +308,127 @@ def header(role, author, severity, status, reply_to):
         "status": status,
         "reply_to": reply_to,
     }
+    if delivery_key is not None:
+        value["delivery_key"] = delivery_key
     return HEADER_PREFIX + json.dumps(value, separators=(",", ":"), ensure_ascii=False)
+
+
+def _delivery_receipt(comments, delivery_key, content, comment_type, target):
+    matches = [
+        item
+        for item in normalize_comments(comments)["comments"]
+        if item["header"].get("delivery_key") == delivery_key
+    ]
+    if len(matches) > 1:
+        raise RoundError(
+            "duplicate_delivery_key",
+            "More than one TUICR comment has the same delivery key",
+        )
+    if not matches:
+        return None
+    existing = matches[0]
+    if (
+        existing["raw"].get("content") != content
+        or existing["comment_type"] != comment_type
+        or existing["target"] != target
+    ):
+        raise RoundError(
+            "delivery_key_conflict",
+            "The delivery key already belongs to a different comment",
+        )
+    return existing["raw"]
+
+
+def _validate_delivery_key(delivery_key):
+    if delivery_key is None:
+        return
+    invalid = (
+        not isinstance(delivery_key, str)
+        or not delivery_key.strip()
+        or len(delivery_key) > 256
+        or "\x00" in delivery_key
+    )
+    if invalid:
+        raise RoundError(
+            "invalid_delivery_key",
+            "Delivery key must be a non-empty string of at most 256 characters",
+        )
+
+
+def _write_comment(round_value, session, payload, delivery_key, author):
+    if delivery_key is not None:
+        existing = _delivery_receipt(
+            comments_for_session(round_value, session),
+            delivery_key,
+            payload["content"],
+            payload["type"],
+            _target_for_comment(payload),
+        )
+        if existing is not None:
+            return existing
+    return _tuicr_json(
+        round_value,
+        [
+            "review",
+            "add",
+            "--session",
+            session["slug"],
+            "--repo",
+            round_value["repo_root"],
+            "--input",
+            "-",
+            "--username",
+            author,
+        ],
+        input_value=payload,
+    )
+
+
+def _reply_target(root, round_value, reply_to):
+    """Return the normalized target inherited from a reply parent."""
+    if reply_to is None:
+        return None
+    comments = get_comments(root, round_value)
+    analysis = normalize_comments(comments)
+    target = next(
+        (item for item in analysis["comments"] if item["id"] == reply_to), None
+    )
+    if target is None:
+        raise RoundError(
+            "invalid_reply",
+            "reply_to must identify a valid native or protocol comment in this round",
+            {"reply_to": reply_to},
+        )
+    return target["target"]
+
+
+def _resolve_comment_type(severity, comment_type):
+    """Resolve a native comment type compatible with the protocol severity."""
+    default = TYPE_BY_SEVERITY.get(severity)
+    if default is None:
+        raise RoundError(
+            "invalid_severity", "Unsupported severity", {"severity": severity}
+        )
+    if comment_type is None:
+        return default
+    expected = SEVERITY_BY_NATIVE_TYPE.get(comment_type)
+    if expected is None:
+        raise RoundError(
+            "invalid_comment_type",
+            "Unsupported native comment type",
+            {"comment_type": comment_type},
+        )
+    if expected != severity:
+        raise RoundError(
+            "invalid_comment_type",
+            "Native comment type is incompatible with protocol severity",
+            {
+                "comment_type": comment_type,
+                "severity": severity,
+                "expected_severity": expected,
+            },
+        )
+    return comment_type
 
 
 def add_comment(
@@ -324,24 +444,18 @@ def add_comment(
     start=None,
     end=None,
     side=None,
+    *,
+    comment_type=None,
+    delivery_key=None,
 ):
+    """Add one structured comment through TUICR's public CLI."""
     if not isinstance(message, str) or not message.strip():
         raise RoundError("invalid_message", "Comment message must not be empty")
+    _validate_delivery_key(delivery_key)
     author = resolve_author(round_value, role, author)
     if reply_to is None and status != "open":
         raise RoundError("invalid_status", "Root comments must start with status open")
-    inherited = None
-    if reply_to is not None:
-        comments = get_comments(root, round_value)
-        analysis = normalize_comments(comments)
-        target = next((item for item in analysis["comments"] if item["id"] == reply_to), None)
-        if target is None:
-            raise RoundError(
-                "invalid_reply",
-                "reply_to must identify a valid native or protocol comment in this round",
-                {"reply_to": reply_to},
-            )
-        inherited = target["target"]
+    inherited = _reply_target(root, round_value, reply_to)
     if path is None and start is None and end is None and inherited is not None:
         path, start, end = inherited["path"], inherited["start"], inherited["end"]
     path, start, end = normalize_target(round_value["repo_root"], path, start, end)
@@ -349,8 +463,9 @@ def add_comment(
         side = inherited["side"] if inherited is not None else "new"
     if side not in ("old", "new"):
         raise RoundError("invalid_target", "Target side must be old or new", {"side": side})
-    content = header(role, author, severity, status, reply_to) + "\n" + message
-    payload = {"type": TYPE_BY_SEVERITY[severity], "content": content, "side": side}
+    content = header(role, author, severity, status, reply_to, delivery_key) + "\n" + message
+    native_type = _resolve_comment_type(severity, comment_type)
+    payload = {"type": native_type, "content": content, "side": side}
     if path is not None:
         payload["file"] = path
         if start is not None and end is not None and start != end:
@@ -360,22 +475,7 @@ def add_comment(
             payload["line"] = start
     session = require_session(root, round_value)
     with round_lock(root, round_value["id"], "protocol"):
-        result = _tuicr_json(
-            round_value,
-            [
-                "review",
-                "add",
-                "--session",
-                session["slug"],
-                "--repo",
-                round_value["repo_root"],
-                "--input",
-                "-",
-                "--username",
-                author,
-            ],
-            input_value=payload,
-        )
+        result = _write_comment(round_value, session, payload, delivery_key, author)
     return result, author, payload
 
 
@@ -393,13 +493,21 @@ def parse_header(comment):
     if not isinstance(value, dict):
         return None
     required = {"version", "role", "author", "severity", "status", "reply_to"}
-    if set(value) != required:
+    optional = set(value) - required
+    if not required.issubset(value) or not optional.issubset({"delivery_key"}):
         return None
     if value["version"] != PROTOCOL_VERSION or value["role"] not in ROLES or value["severity"] not in SEVERITIES or value["status"] not in STATUSES:
         return None
     if not isinstance(value["author"], str) or not value["author"]:
         return None
     if value["reply_to"] is not None and (not isinstance(value["reply_to"], str) or not value["reply_to"]):
+        return None
+    if "delivery_key" in value and (
+        not isinstance(value["delivery_key"], str)
+        or not value["delivery_key"]
+        or len(value["delivery_key"]) > 256
+        or "\x00" in value["delivery_key"]
+    ):
         return None
     return value
 

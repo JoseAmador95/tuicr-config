@@ -11,6 +11,7 @@
     "author": { "type": "string", "minLength": 1 },
     "severity": { "enum": ["blocker", "warning", "nit"] },
     "status": { "enum": ["open", "accept", "discuss", "reject"] },
-    "reply_to": { "type": ["string", "null"], "minLength": 1 }
+    "reply_to": { "type": ["string", "null"], "minLength": 1 },
+    "delivery_key": { "type": "string", "minLength": 1, "maxLength": 256 }
   }
 }
